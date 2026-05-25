@@ -131,6 +131,9 @@ else
     params.sh_volume_aux_weight = 0.50;
 
     params.sh_project_mode = 'hybrid';
+    params.sh_vertical_balance_enable = true;
+    params.sh_target_top_bottom_ratio = 0.82;
+    params.sh_balance_max_boost = 1.55;
     params.sh_second_pass_blend = 0.74;
     params.sh_top_boost = 0.26;
     params.sh_sum_weight = 0.82;
@@ -291,6 +294,29 @@ if is_sh
         P_grl = P_sum;
     end
     P_grl = P_grl/(prctile(P_grl(:),99.7)+eps); P_grl = min(max(P_grl,0),1);
+
+    % 自适应上下能量平衡：抑制下方过强、提升上方弱回波
+    if isfield(params,'sh_vertical_balance_enable') && params.sh_vertical_balance_enable
+        [HH,WW] = size(P_grl);
+        split = max(2, min(HH-1, round(0.55*HH)));
+        Et = sum(sum(P_grl(1:split,:)));
+        Eb = sum(sum(P_grl(split+1:end,:))) + eps;
+        r = Et / Eb;
+        target = params.sh_target_top_bottom_ratio;
+        if r < target
+            g = min(params.sh_balance_max_boost, target / max(r,1e-6));
+            topMask = zeros(HH,1);
+            topMask(1:split) = linspace(1,0.35,split);
+            botMask = zeros(HH,1);
+            botMask(split+1:end) = linspace(0.12,0,numel(split+1:HH));
+            P_grl = P_grl .* (1 + (g-1)*(topMask*ones(1,WW))) .* (1 - 0.15*(botMask*ones(1,WW)));
+            P_grl = P_grl/(prctile(P_grl(:),99.7)+eps);
+            P_grl = min(max(P_grl,0),1);
+            fprintf('[GRL-SH] vertical-balance applied: ratio %.3f -> target %.3f, gain=%.3f\n', r, target, g);
+        else
+            fprintf('[GRL-SH] vertical-balance skipped: ratio %.3f >= target %.3f\n', r, target);
+        end
+    end
 else
     mask = false(sz); mask(td1:td2,:,:) = true; M=double(mask);
     input_grl = data.*M; input_grl(isnan(input_grl))=0;
